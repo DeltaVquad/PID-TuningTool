@@ -2,11 +2,7 @@ import customtkinter as ctk
 from modules.ui.app_main import MainApp
 import sys
 
-<<<<<<< HEAD
 CONNECTION_STRING = 'COM3'
-=======
-CONNECTION_STRING = '/dev/ttyACM0'
->>>>>>> d9afa691036b9fe77e4eed5606bda52c133cc8c2
 BAUD_RATE = 57600
 
 if __name__ == "__main__":
