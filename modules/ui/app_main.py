@@ -190,7 +190,7 @@ class MainApp(ctk.CTk):
         
         count = 0
         t_start = None
-        msgs_to_process = ['ATT', 'RCIN', 'RCOU', 'ANG', 'PSCE', 'PSCN'] 
+        msgs_to_process = ['ATT', 'RCIN', 'RCOU', 'ANG'] 
 
         while True:
             msg = mlog.recv_match(type=msgs_to_process, blocking=False)
@@ -225,20 +225,6 @@ class MainApp(ctk.CTk):
                 telemetry_buffer.insert_manual('err_pitch', rel_time, des_p - p)
                 telemetry_buffer.insert_manual('err_yaw', rel_time, des_y - y)
             
-            elif mtype == 'PSCN':
-                dvn = getattr(msg, 'TV', 0)
-                vn = getattr(msg, 'V', 0)
-                telemetry_buffer.insert_manual('dvn', rel_time, dvn) 
-                telemetry_buffer.insert_manual('vn', rel_time, vn)   
-                telemetry_buffer.insert_manual('err_vn', rel_time, dvn - vn)
-            
-            elif mtype == 'PSCE':
-                dve = getattr(msg, 'TV', 0)
-                ve = getattr(msg, 'V', 0)
-                telemetry_buffer.insert_manual('dve', rel_time, dve) 
-                telemetry_buffer.insert_manual('ve', rel_time, ve)   
-                telemetry_buffer.insert_manual('err_ve', rel_time, dve - ve)
-
             elif mtype == 'RCIN':
                 telemetry_buffer.insert_manual('rcin1', rel_time, getattr(msg, 'C1', 0))
                 telemetry_buffer.insert_manual('rcin2', rel_time, getattr(msg, 'C2', 0))
