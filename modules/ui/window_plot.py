@@ -2,6 +2,7 @@ import customtkinter as ctk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2Tk
 from matplotlib.figure import Figure
 from matplotlib.backend_bases import MouseButton
+from ardupilot_log_reader import Ardupilot
 from .. import telemetry_buffer
 
 class JanelaTelemetria(ctk.CTkToplevel):
@@ -15,7 +16,7 @@ class JanelaTelemetria(ctk.CTkToplevel):
         self.lines = {}
         self.checkboxes = {}
         self.groups_ui = {} # Guarda referencias dos grupos colapsáveis
-        self.active_keys = ['roll', 'pitch', 'yaw']
+        self.active_keys = ['roll', 'pitch', 'yaw', 'vn', 've']
         
         # Paleta de Cores Original
         self.palette = ['#00ff00', '#00ccff', '#ff3333', '#ffff00', '#ff00ff', '#ff9900', '#aa00ff', '#ffffff', '#00ff99', '#ff66b2']
@@ -33,10 +34,22 @@ class JanelaTelemetria(ctk.CTkToplevel):
                 ("pitch", "Pitch Atual"), ("des_pitch", "Pitch Desejado"),
                 ("yaw", "Yaw Atual"), ("des_yaw", "Yaw Desejado")
             ],
-            "ERRO (Graus)": [
+            "ERRO ATITUDE (Graus)": [
                 ("err_roll", "Erro Roll"),
                 ("err_pitch", "Erro Pitch"),
                 ("err_yaw", "Erro Yaw")
+            ],
+            "VELOCIDADE East (m/s)": [
+            ("dve", "Vel East Desejada (DVE)"),
+            ("ve", "Vel East Real (VE)")
+            ],
+            "VELOCIDADE North (m/s)": [
+            ("dvn", "Vel North Desejada (DVN)"),
+            ("vn", "Vel North Real (VN)"),
+            ],
+            "ERRO VELOCIDADE (m/s)": [
+            ("err_vn", "Erro Vel North "),
+            ("err_ve", "Erro Vel East")
             ],
             "RC INPUT (RCIN)": [("rcin1", "C1 (Rll)"), ("rcin2", "C2 (Pit)"), ("rcin3", "C3 (Thr)"), ("rcin4", "C4 (Yaw)")],
             "RC OUTPUT (RCOUT)": [("rcout1", "C1"), ("rcout2", "C2"), ("rcout3", "C3"), ("rcout4", "C4")]
@@ -65,11 +78,7 @@ class JanelaTelemetria(ctk.CTkToplevel):
         self.toolbar.pack(side="top", fill="x")
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
-<<<<<<< HEAD
-        # Eventos do Mouse
-=======
         # Eventos do Mouse (Zoom, Pan, Hover)
->>>>>>> d9afa691036b9fe77e4eed5606bda52c133cc8c2
         self.canvas.mpl_connect('scroll_event', self.on_scroll)
         self.canvas.mpl_connect('button_press_event', self.on_click)
         self.canvas.mpl_connect('motion_notify_event', self.on_hover)
@@ -84,23 +93,6 @@ class JanelaTelemetria(ctk.CTkToplevel):
         self.frame_sidebar = ctk.CTkFrame(self)
         self.frame_sidebar.grid(row=0, column=1, sticky="nsew", padx=5, pady=5)
         
-<<<<<<< HEAD
-        # Título
-        ctk.CTkLabel(self.frame_sidebar, text="Parâmetros", font=("Segoe UI", 18, "bold")).pack(pady=5)
-        
-        # Botões Principais (Pause)
-        self.btn_pause = ctk.CTkButton(self.frame_sidebar, text="PAUSAR", fg_color="#bd2828", command=self.toggle_pause)
-        self.btn_pause.pack(pady=5, padx=10, fill="x")
-
-        # Frame Scrollável para Checkboxes
-        self.scroll_params = ctk.CTkScrollableFrame(self.frame_sidebar, label_text="Selecionar Dados")
-        self.scroll_params.pack(fill="both", expand=True, padx=5, pady=5)
-
-        self.criar_controles()
-
-        # --- NOVA SEÇÃO: ANÁLISE QUANTITATIVA ---
-        self.criar_secao_analise()
-=======
         ctk.CTkLabel(self.frame_sidebar, text="Parâmetros", font=("Segoe UI", 18, "bold")).pack(pady=10)
         
         # Frame Scrollável
@@ -109,10 +101,10 @@ class JanelaTelemetria(ctk.CTkToplevel):
 
         # Cria os grupos colapsáveis e checkboxes
         self.criar_controles()
+        self.criar_secao_analise()
 
         self.btn_pause = ctk.CTkButton(self.frame_sidebar, text="PAUSAR", fg_color="#bd2828", command=self.toggle_pause)
         self.btn_pause.pack(pady=20, padx=10, fill="x")
->>>>>>> d9afa691036b9fe77e4eed5606bda52c133cc8c2
 
         # Aplica cores iniciais
         self.recalcular_cores()
@@ -120,8 +112,7 @@ class JanelaTelemetria(ctk.CTkToplevel):
         
         # Inicia loop de plotagem
         self.update_plot_loop()
-
-<<<<<<< HEAD
+            
     def criar_secao_analise(self):
         # Frame container
         self.frame_analise = ctk.CTkFrame(self.frame_sidebar, fg_color="#2b2b2b")
@@ -154,35 +145,72 @@ class JanelaTelemetria(ctk.CTkToplevel):
             t_ini = float(self.entry_t_start.get().replace(',', '.'))
             t_fim = float(self.entry_t_end.get().replace(',', '.'))
         except ValueError:
-            self._exibir_resultado("Erro: Tempos inválidos.")
+            self._exibir_resultado("Erro: Tempos inválidos. Use números.")
             return
 
         if t_ini >= t_fim:
-            self._exibir_resultado("Erro: T. Inicial >= T. Final")
+            self._exibir_resultado("Erro: T. Inicial deve ser menor que T. Final.")
             return
 
-        keys_to_analyze = ['err_pitch', 'err_roll', 'err_yaw']
         results = []
 
-        for key in keys_to_analyze:
+        # 1. Analisar Erros de Atitude (já calculados no drone_manager)
+        keys_atitude = ['err_roll', 'err_pitch', 'err_yaw']
+        for key in keys_atitude:
             timestamps, values = telemetry_buffer.get_values(key)
             if not values:
-                results.append(f"{key}: Sem dados")
                 continue
 
-            total_abs_error = 0.0
+            total_erro = 0.0      # Erro Simples (Viés)
+            total_abs_error = 0.0 # Erro Absoluto (Magnitude)
             count = 0
             
             for t, v in zip(timestamps, values):
                 if t_ini <= t <= t_fim:
+                    total_erro += v
                     total_abs_error += abs(v)
                     count += 1
             
-            nome_display = key.replace('err_', '').upper()
-            media_erro = total_abs_error / count if count > 0 else 0.0
-            results.append(f"{nome_display}: Soma={total_abs_error:.4f} | Média={media_erro:.4f} (N={count})")
+            if count > 0:
+                nome_display = key.replace('err_', '').upper()
+                media_erro = total_erro / count
+                media_abs = total_abs_error / count
+                results.append(f"{nome_display}:\n  Média: {media_erro:+.4f}° | MAE: {media_abs:.4f}°")
 
-        texto_final = f"Intervalo: {t_ini}s a {t_fim}s\n" + "\n".join(results)
+        # 2. Analisar Erros de Velocidade (Comparando Target vs Real)
+        # Como VN/DVN e VE/DVE são gravados juntos pelo Ardupilot, podemos comparar os índices.
+        pares_vel = [('VN (North)', 'dvn', 'vn'), ('VE (East)', 'dve', 've')]
+        
+        for nome_display, key_desejada, key_real in pares_vel:
+            t_des, v_des = telemetry_buffer.get_values(key_desejada)
+            t_real, v_real = telemetry_buffer.get_values(key_real)
+            
+            if not v_des or not v_real:
+                continue
+                
+            total_erro = 0.0
+            total_abs_error = 0.0
+            count = 0
+            
+            t_min_len = min(len(t_des), len(t_real))
+            for i in range(t_min_len):
+                t = t_real[i]
+                if t_ini <= t <= t_fim:
+                    erro = v_des[i] - v_real[i] # Erro = Desejado - Real
+                    total_erro += erro
+                    total_abs_error += abs(erro)
+                    count += 1
+                    
+            if count > 0:
+                media_erro = total_erro / count
+                media_abs = total_abs_error / count
+                results.append(f"Erro {nome_display}:\n  Média: {media_erro:+.4f} m/s | Erro médio: {media_abs:.4f} m/s")
+
+        if not results:
+            self._exibir_resultado("Nenhum dado encontrado nesse intervalo.")
+            return
+
+        texto_final = f"=== INTERVALO: {t_ini}s a {t_fim}s ===\n" + "\n".join(results)
         self._exibir_resultado(texto_final)
 
     def _exibir_resultado(self, texto):
@@ -191,8 +219,6 @@ class JanelaTelemetria(ctk.CTkToplevel):
         self.txt_resultado.insert("0.0", texto)
         self.txt_resultado.configure(state="disabled")
 
-=======
->>>>>>> d9afa691036b9fe77e4eed5606bda52c133cc8c2
     def configurar_eixos(self):
         self.ax.set_facecolor('#1e1e1e')
         self.ax.grid(True, color='#444444', linestyle='--')
@@ -297,20 +323,24 @@ class JanelaTelemetria(ctk.CTkToplevel):
         self.canvas.draw_idle()
 
     def update_plot_loop(self):
-        if not self.winfo_exists(): return
+        if not self.winfo_exists():
+            return
+            
         if not self.paused:
             has_data = False
             for key in self.active_keys:
                 t, v = telemetry_buffer.get_values(key)
-                if t:
+                if t and len(t) > 0:
                     self.lines[key].set_data(t, v)
                     has_data = True
             
             if has_data:
                 self.ax.relim()
                 self.ax.autoscale_view()
+            
             self.canvas.draw_idle()
         
+        # O self.after DEVE estar aqui, recuado dentro da função
         self.after(33, self.update_plot_loop)
 
     # --- Funcionalidades de Zoom/Pan/Hover ---

@@ -2,6 +2,7 @@ import time
 import math
 from decimal import Decimal
 import collections
+from ardupilot_log_reader import Ardupilot
 if not hasattr(collections, 'MutableMapping'):
     collections.MutableMapping = collections.abc.MutableMapping
 from dronekit import connect, VehicleMode
@@ -105,6 +106,25 @@ class DroneManager:
         except Exception as e:
             self.log(f"Erro ao enviar PIDs: {e}")
 
+    def processar_log_posicao(self, caminho_arquivo):
+        """
+        Lê o arquivo .bin e extrai dados de posição (North, East, Down).
+        """
+        try:
+            self.log(f"Processando log: {caminho_arquivo}")
+            log_data = Ardupilot.parse(caminho_arquivo, types=['PSCN', 'PSCE', 'PSCD'])
+            dados_posicao = {
+                'north': log_data.PSCN, # DataFrame com campos TP (Target) e P (Actual)
+                'east':  log_data.PSCE,
+                'down':  log_data.PSCD
+            }
+            
+            self.log("Log de posição processado com sucesso.")
+            return dados_posicao
+        except Exception as e:
+            self.log(f"Erro ao ler log: {e}")
+            return None
+
     # --- Callbacks e Telemetria ---
     def _configurar_listeners(self):
         self.vehicle.add_attribute_listener('attitude', self._cb_attitude)
@@ -118,7 +138,6 @@ class DroneManager:
         # 83: ATTITUDE_TARGET (Desejados)
         # 65: RC_CHANNELS (Inputs do rádio)
         # 36: SERVO_OUTPUT_RAW (Saídas para motores)
-        
         # Intervalo em microssegundos (20000us = 50Hz)
         interval_us = 10000 
         
@@ -134,7 +153,6 @@ class DroneManager:
             except Exception as e:
                 self.log(f"Erro ao pedir stream {msg_id}: {e}")
 
-    # Adicione este método auxiliar na classe ou fora dela
     def _calcular_erro_angular(self, target, current):
         diff = target - current
         # Normaliza para -180 a 180
@@ -142,7 +160,6 @@ class DroneManager:
         return diff
 
     # --- Callbacks Atualizados ---
-
     def _cb_attitude(self, _, attr_name, value):
         r = math.degrees(value.roll)
         p = math.degrees(value.pitch)

@@ -9,6 +9,7 @@ from datetime import datetime
 from decimal import Decimal
 from tkinter import filedialog 
 from pymavlink import mavutil 
+from ardupilot_log_reader import Ardupilot
 
 from ..drone_manager import DroneManager
 from .. import telemetry_buffer
@@ -71,6 +72,60 @@ class MainApp(ctk.CTk):
         
         self.protocol("WM_DELETE_WINDOW", self.mostrar_dialogo_saida)
 
+    def carregar_log_com_ardupilot_reader(self, filename):
+        """
+        Lê o ficheiro .bin usando a biblioteca ardupilot_log_reader 
+        e envia os dados de velocidade (Copter) e seus erros para o telemetry_buffer.
+        """
+        self.log(f"Processando Log com ArdupilotLogReader: {os.path.basename(filename)}...")
+        
+        try:
+            from ardupilot_log_reader import Ardupilot
+            log_data = Ardupilot.parse(filename, types=['PSCN', 'PSCE'])
+            
+            if hasattr(log_data, 'PSCN') and not log_data.PSCN.empty:
+                df_n = log_data.PSCN
+                colunas_n = list(df_n.columns)
+                
+                col_v = next((c for c in ['V', 'VN', 'Vel', 'Velocity'] if c in colunas_n), None)
+                col_tv = next((c for c in ['TV', 'TVN', 'TVel', 'DesVel', 'TargetVel'] if c in colunas_n), None)
+                
+                if col_v and col_tv:
+                    t0_n = df_n['TimeUS'].iloc[0] / 1e6
+                    for t_us, v, tv in zip(df_n['TimeUS'], df_n[col_v], df_n[col_tv]):
+                        t_sec = (t_us / 1e6) - t0_n
+                        telemetry_buffer.insert_manual('vn', t_sec, v)
+                        telemetry_buffer.insert_manual('dvn', t_sec, tv)
+                        
+                        telemetry_buffer.insert_manual('err_vn', t_sec, tv - v)
+                else:
+                    self.log(f"AVISO: Colunas não encontradas no PSCN! O log contém apenas: {colunas_n}")
+
+            if hasattr(log_data, 'PSCE') and not log_data.PSCE.empty:
+                df_e = log_data.PSCE
+                colunas_e = list(df_e.columns)
+                
+                col_v = next((c for c in ['V', 'VE', 'Vel', 'Velocity'] if c in colunas_e), None)
+                col_tv = next((c for c in ['TV', 'TVE', 'TVel', 'DesVel', 'TargetVel'] if c in colunas_e), None)
+                
+                if col_v and col_tv:
+                    t0_e = df_e['TimeUS'].iloc[0] / 1e6
+                    for t_us, v, tv in zip(df_e['TimeUS'], df_e[col_v], df_e[col_tv]):
+                        t_sec = (t_us / 1e6) - t0_e
+                        telemetry_buffer.insert_manual('ve', t_sec, v)
+                        telemetry_buffer.insert_manual('dve', t_sec, tv)
+                        
+                        telemetry_buffer.insert_manual('err_ve', t_sec, tv - v)
+                else:
+                    self.log(f"AVISO: Colunas não encontradas no PSCE! O log contém apenas: {colunas_e}")
+
+            self.log("Leitura de velocidades (PSCN/PSCE) e erros concluída!")
+            
+        except ImportError:
+            self.log("Erro: Biblioteca 'ardupilot_log_reader' não instalada.")
+        except Exception as e:
+            self.log(f"Erro crítico ao ler PSCN/PSCE: {e}")
+            
     # --- Método Auxiliar para Abrir Janela e Forçar Foco ---
     def _abrir_janela_telemetria_forcada(self):
         janela = JanelaTelemetria(self)
@@ -103,6 +158,7 @@ class MainApp(ctk.CTk):
                 self._parse_csv_log(filename)
             else:
                 self._parse_mavlink_log(filename)
+                self.carregar_log_com_ardupilot_reader(filename)
             
             self._abrir_janela_telemetria_forcada()
             
@@ -134,7 +190,7 @@ class MainApp(ctk.CTk):
         
         count = 0
         t_start = None
-        msgs_to_process = ['ATT', 'RCIN', 'RCOU', 'ANG'] 
+        msgs_to_process = ['ATT', 'RCIN', 'RCOU', 'ANG', 'PSCE', 'PSCN'] 
 
         while True:
             msg = mlog.recv_match(type=msgs_to_process, blocking=False)
@@ -150,7 +206,6 @@ class MainApp(ctk.CTk):
             if t_start is None: t_start = t_sec
             rel_time = t_sec - t_start
             mtype = msg.get_type()
-            
             if mtype == 'ATT' or mtype == 'ANG':
                 r = getattr(msg, 'Roll', 0)
                 des_r = getattr(msg, 'DesRoll', 0)
@@ -165,10 +220,24 @@ class MainApp(ctk.CTk):
                 telemetry_buffer.insert_manual('des_pitch', rel_time, des_p)
                 telemetry_buffer.insert_manual('yaw', rel_time, y)
                 telemetry_buffer.insert_manual('des_yaw', rel_time, des_y)
-                
+ 
                 telemetry_buffer.insert_manual('err_roll', rel_time, des_r - r)
                 telemetry_buffer.insert_manual('err_pitch', rel_time, des_p - p)
                 telemetry_buffer.insert_manual('err_yaw', rel_time, des_y - y)
+            
+            elif mtype == 'PSCN':
+                dvn = getattr(msg, 'TV', 0)
+                vn = getattr(msg, 'V', 0)
+                telemetry_buffer.insert_manual('dvn', rel_time, dvn) 
+                telemetry_buffer.insert_manual('vn', rel_time, vn)   
+                telemetry_buffer.insert_manual('err_vn', rel_time, dvn - vn)
+            
+            elif mtype == 'PSCE':
+                dve = getattr(msg, 'TV', 0)
+                ve = getattr(msg, 'V', 0)
+                telemetry_buffer.insert_manual('dve', rel_time, dve) 
+                telemetry_buffer.insert_manual('ve', rel_time, ve)   
+                telemetry_buffer.insert_manual('err_ve', rel_time, dve - ve)
 
             elif mtype == 'RCIN':
                 telemetry_buffer.insert_manual('rcin1', rel_time, getattr(msg, 'C1', 0))
@@ -199,7 +268,6 @@ class MainApp(ctk.CTk):
         self._abrir_janela_telemetria_forcada()
 
     def mostrar_dialogo_saida(self):
-        # --- ALTERAÇÃO: Se estiver no modo de visualização de log, encerra sem perguntar ---
         if self.viewing_log:
             self._encerrar_tudo()
             return
@@ -570,7 +638,11 @@ class MainApp(ctk.CTk):
 
     def _processar_score_performance(self, t_start, t_end):
         eixo = self.axis_mode
-        mapa_chaves = {"Pitch": "err_pitch", "Roll":  "err_roll", "Yaw":   "err_yaw"}
+        mapa_chaves = {
+            "Pitch": "err_pitch", 
+            "Roll":  "err_roll", 
+            "Yaw":   "err_yaw",
+        }
         chave_erro = mapa_chaves.get(eixo, "err_pitch")
         tempos, valores = telemetry_buffer.get_values(chave_erro)
         soma_modulos = 0.0
