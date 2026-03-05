@@ -1,0 +1,6 @@
+ardupilot_log_reader
+pymavlink
+git+https://github.com/dronekit/dronekit-python
+scipy
+matplotlib
+customtkinter
