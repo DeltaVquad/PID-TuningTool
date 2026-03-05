@@ -12,7 +12,7 @@ A ferramenta permite visualizar dados de atitude e canais RC, bem como ajustar o
     * Interface de gráficos interativa com zoom, pause e seleção de dados visíveis.
 * **Ajuste de PID (Tuning):**
     * Leitura e escrita de parâmetros PID do drone (P, I, D e IMAX).
-    * Seleção de eixos para ajuste individual (Pitch, Roll, Yaw).
+    * Seleção de eixos para ajuste individual (Pitch, Roll, Yaw e Velocidade).
     * **Modo Link:** Possibilidade de vincular e ajustar Roll e Pitch simultaneamente.
     * Multiplicador ajustável para incrementos finos ou grosseiros nos valores.
 * **Controlo Básico:**
@@ -22,16 +22,10 @@ A ferramenta permite visualizar dados de atitude e canais RC, bem como ajustar o
 
 ## 🛠️ Pré-requisitos
 
-Para executar este projeto, necessita de ter o **Python 3** instalado e as seguintes bibliotecas:
-
-* `customtkinter`
-* `matplotlib`
-* `dronekit`
-
-Pode instalar as dependências através do comando:
+Para executar este projeto, necessita de ter o **Python 3** instalado e as bibliotecas que estão em requirements.txt:
 
 ```bash
-pip install customtkinter matplotlib dronekit
+pip install -r requirements.txt
 ```
 
 ## ⚙️ Configuração de Conexão
