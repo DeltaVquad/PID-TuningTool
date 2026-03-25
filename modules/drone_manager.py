@@ -131,6 +131,8 @@ class DroneManager:
         self.vehicle.add_message_listener('ATTITUDE_TARGET', self._cb_att_target)
         self.vehicle.add_message_listener('RC_CHANNELS', self._cb_rc)
         self.vehicle.add_message_listener('SERVO_OUTPUT_RAW', self._cb_servo)
+        self.vehicle.add_message_listener('LOCAL_POSITION_NED', self._cb_local_pos)
+        self.vehicle.add_message_listener('POSITION_TARGET_LOCAL_NED', self._cb_pos_target)
 
     def _request_mavlink_streams(self):
         # IDs das mensagens MAVLink:
@@ -141,7 +143,7 @@ class DroneManager:
         # Intervalo em microssegundos (20000us = 50Hz)
         interval_us = 10000 
         
-        ids_to_request = [30, 83, 65, 36]
+        ids_to_request = [30, 83, 65, 36, 32, 85]
 
         for msg_id in ids_to_request:
             try:
@@ -159,7 +161,21 @@ class DroneManager:
         diff = (diff + 180) % 360 - 180
         return diff
 
+
     # --- Callbacks Atualizados ---
+    
+    def _cb_local_pos(self, _, name, msg):
+        submit_data('pn', msg.x)
+        submit_data('pe', msg.y)
+        submit_data('vn', msg.vx)
+        submit_data('ve', msg.vy)
+
+    def _cb_pos_target(self, _, name, msg):
+        submit_data('dpn', msg.x)
+        submit_data('dpe', msg.y)
+        submit_data('dvn', msg.vx)
+        submit_data('dve', msg.vy)
+
     def _cb_attitude(self, _, attr_name, value):
         r = math.degrees(value.roll)
         p = math.degrees(value.pitch)

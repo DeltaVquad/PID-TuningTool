@@ -9,7 +9,6 @@ from datetime import datetime
 from decimal import Decimal
 from tkinter import filedialog 
 from pymavlink import mavutil 
-from ardupilot_log_reader import Ardupilot
 
 from ..drone_manager import DroneManager
 from .. import telemetry_buffer
@@ -116,6 +115,26 @@ class MainApp(ctk.CTk):
                         telemetry_buffer.insert_manual('dve', t_sec, tv)
                         
                         telemetry_buffer.insert_manual('err_ve', t_sec, tv - v)
+
+                col_p = next((c for c in ['PN', 'Pos', 'Position'] if c in colunas_n), None)
+                col_tp = next((c for c in ['TPN', 'TPos', 'DesPos', 'TargetPos'] if c in colunas_n), None)
+
+                if col_p and col_tp:
+                    for t_us, p, tp in zip(df_n['TimeUS'], df_n[col_p], df_n[col_tp]):
+                        t_sec = (t_us / 1e6) - t0_n
+                        telemetry_buffer.insert_manual('pn', t_sec, p)
+                        telemetry_buffer.insert_manual('dpn', t_sec, tp)
+                        telemetry_buffer.insert_manual('err_pn', t_sec, tp - p)
+
+                col_p = next((c for c in ['PE', 'Pos', 'Position'] if c in colunas_e), None)
+                col_tp = next((c for c in ['TPE', 'TPos', 'DesPos', 'TargetPos'] if c in colunas_e), None)
+
+                if col_p and col_tp:
+                    for t_us, p, tp in zip(df_e['TimeUS'], df_e[col_p], df_e[col_tp]):
+                        t_sec = (t_us / 1e6) - t0_e
+                        telemetry_buffer.insert_manual('pe', t_sec, p)
+                        telemetry_buffer.insert_manual('dpe', t_sec, tp)
+                        telemetry_buffer.insert_manual('err_pe', t_sec, tp - p)
                 else:
                     self.log(f"AVISO: Colunas não encontradas no PSCE! O log contém apenas: {colunas_e}")
 
@@ -144,7 +163,7 @@ class MainApp(ctk.CTk):
 
     def carregar_log_externo(self):
         filename = filedialog.askopenfilename(title="Selecione o Log", 
-                                              filetypes=[("Log Files", "*.csv *.bin *.log"), ("All Files", "*.*")])
+                                              filetypes=[("Log Files", "*.csv *.bin *.tlog *.log"), ("All Files", "*.*")])
         if not filename:
             return
 
@@ -155,10 +174,10 @@ class MainApp(ctk.CTk):
             ext = os.path.splitext(filename)[1].lower()
             
             if ext == '.csv':
-                self._parse_csv_log(filename)
+                self._parse_csv_log(filename) # Mantém a leitura do CSV que ajustamos antes
             else:
+                # Agora processamos TODO o log MAVLink apenas por esta função
                 self._parse_mavlink_log(filename)
-                self.carregar_log_com_ardupilot_reader(filename)
             
             self._abrir_janela_telemetria_forcada()
             
@@ -170,77 +189,164 @@ class MainApp(ctk.CTk):
 
     def _parse_csv_log(self, filename):
         count = 0
+        t0 = None 
+        
         with open(filename, 'r', encoding='utf-8') as f:
-            reader = csv.reader(f)
+            reader = csv.DictReader(f)
+            
+            reader.fieldnames = [name.strip() for name in reader.fieldnames]
+            
             for row in reader:
-                if not row or row[0].startswith('#') or row[0] == 'Timestamp':
+                if not row or 'timestamp' not in row:
                     continue
-                if len(row) >= 3:
-                    t, k, v = row[0], row[1], row[2]
-                    try:
-                        telemetry_buffer.insert_manual(k, float(t), float(v))
-                        count += 1
-                    except ValueError:
-                        pass
-        self.log(f"CSV carregado: {os.path.basename(filename)} ({count} pontos).")
+                
+                try:
+                    abs_t = float(row['timestamp'])
+                    if t0 is None:
+                        t0 = abs_t 
+                    
+                    rel_t = abs_t - t0
+                    
+                    row_type = row.get('type', '').strip().lower()
+                    
+                    if row_type == 'current':
+                        telemetry_buffer.insert_manual('vn', rel_t, float(row.get('vel_x', 0)))
+                        telemetry_buffer.insert_manual('ve', rel_t, float(row.get('vel_y', 0)))
+                        telemetry_buffer.insert_manual('roll', rel_t, float(row.get('roll_deg', 0)))
+                        telemetry_buffer.insert_manual('pitch', rel_t, float(row.get('pitch_deg', 0)))
+                        telemetry_buffer.insert_manual('yaw', rel_t, float(row.get('yaw_deg', 0)))
+                        
+                        telemetry_buffer.insert_manual('pn', rel_t, float(row.get('pos_x', 0)))
+                        telemetry_buffer.insert_manual('pe', rel_t, float(row.get('pos_y', 0)))
+                        
+                    elif row_type == 'target':
+                        telemetry_buffer.insert_manual('dvn', rel_t, float(row.get('vel_x', 0)))
+                        telemetry_buffer.insert_manual('dve', rel_t, float(row.get('vel_y', 0)))
+                        telemetry_buffer.insert_manual('des_roll', rel_t, float(row.get('roll_deg', 0)))
+                        telemetry_buffer.insert_manual('des_pitch', rel_t, float(row.get('pitch_deg', 0)))
+                        telemetry_buffer.insert_manual('des_yaw', rel_t, float(row.get('yaw_deg', 0)))
+                        
+                        telemetry_buffer.insert_manual('dpn', rel_t, float(row.get('pos_x', 0)))
+                        telemetry_buffer.insert_manual('dpe', rel_t, float(row.get('pos_y', 0)))
+                    
+                    count += 1
+                except ValueError:
+                    # Ignora a linha caso algum valor falhe na conversão para float
+                    pass 
+                    
+        self.log(f"CSV de testes carregado: {os.path.basename(filename)} ({count} pontos mapeados).")
 
     def _parse_mavlink_log(self, filename):
-        self.log(f"Processando Log Binário: {os.path.basename(filename)}...")
+        self.log(f"Processando Log MAVLink: {os.path.basename(filename)}...")
         mlog = mavutil.mavlink_connection(filename)
         
         count = 0
         t_start = None
-        msgs_to_process = ['ATT', 'RCIN', 'RCOU', 'ANG'] 
+        
+        # Estas são as mensagens exatas que a sua API (MavlinkAPI/DeltaVehicle) utiliza
+        msgs_to_process = [
+            'ATTITUDE', 'ATTITUDE_TARGET', 'LOCAL_POSITION_NED', 
+            'POSITION_TARGET_LOCAL_NED', 'RC_CHANNELS', 'SERVO_OUTPUT_RAW',
+            'PSCN', 'PSCE' # <-- ADICIONE AQUI
+        ]
 
         while True:
             msg = mlog.recv_match(type=msgs_to_process, blocking=False)
             if not msg:
                 break
             
-            t_us = getattr(msg, 'TimeUS', None)
-            if t_us is not None:
-                t_sec = t_us / 1e6
+            # Padronização do tempo: tenta ms de boot (MAVLink padrão) ou timestamp fallback
+            if hasattr(msg, 'time_boot_ms'):
+                t_sec = msg.time_boot_ms / 1000.0
             else:
                 t_sec = getattr(msg, '_timestamp', 0)
                 
-            if t_start is None: t_start = t_sec
-            rel_time = t_sec - t_start
-            mtype = msg.get_type()
-            if mtype == 'ATT' or mtype == 'ANG':
-                r = getattr(msg, 'Roll', 0)
-                des_r = getattr(msg, 'DesRoll', 0)
-                p = getattr(msg, 'Pitch', 0)
-                des_p = getattr(msg, 'DesPitch', 0)
-                y = getattr(msg, 'Yaw', 0)
-                des_y = getattr(msg, 'DesYaw', 0)
+            if t_start is None and t_sec > 0: 
+                t_start = t_sec
                 
-                telemetry_buffer.insert_manual('roll', rel_time, r)
-                telemetry_buffer.insert_manual('des_roll', rel_time, des_r)
-                telemetry_buffer.insert_manual('pitch', rel_time, p)
-                telemetry_buffer.insert_manual('des_pitch', rel_time, des_p)
-                telemetry_buffer.insert_manual('yaw', rel_time, y)
-                telemetry_buffer.insert_manual('des_yaw', rel_time, des_y)
- 
-                telemetry_buffer.insert_manual('err_roll', rel_time, des_r - r)
-                telemetry_buffer.insert_manual('err_pitch', rel_time, des_p - p)
-                telemetry_buffer.insert_manual('err_yaw', rel_time, des_y - y)
+            rel_time = t_sec - t_start if t_start else t_sec
+            mtype = msg.get_type()
             
-            elif mtype == 'RCIN':
-                telemetry_buffer.insert_manual('rcin1', rel_time, getattr(msg, 'C1', 0))
-                telemetry_buffer.insert_manual('rcin2', rel_time, getattr(msg, 'C2', 0))
-                telemetry_buffer.insert_manual('rcin3', rel_time, getattr(msg, 'C3', 0))
-                telemetry_buffer.insert_manual('rcin4', rel_time, getattr(msg, 'C4', 0))
+            # --- ATITUDE ATUAL ---
+            if mtype == 'ATTITUDE':
+                telemetry_buffer.insert_manual('roll', rel_time, math.degrees(msg.roll))
+                telemetry_buffer.insert_manual('pitch', rel_time, math.degrees(msg.pitch))
+                telemetry_buffer.insert_manual('yaw', rel_time, math.degrees(msg.yaw))
+                
+            # --- ATITUDE DESEJADA ---
+            elif mtype == 'ATTITUDE_TARGET':
+                # MAVLink envia a atitude desejada em Quatérnios (q)
+                w, x, y, z = msg.q[0], msg.q[1], msg.q[2], msg.q[3]
+                
+                # Conversão manual Quatérnio -> Euler (padrão ZYX)
+                sinr_cosp = 2 * (w * x + y * z)
+                cosr_cosp = 1 - 2 * (x * x + y * y)
+                roll = math.atan2(sinr_cosp, cosr_cosp)
+                
+                sinp = 2 * (w * y - z * x)
+                pitch = math.copysign(math.pi / 2, sinp) if abs(sinp) >= 1 else math.asin(sinp)
+                
+                siny_cosp = 2 * (w * z + x * y)
+                cosy_cosp = 1 - 2 * (y * y + z * z)
+                yaw = math.atan2(siny_cosp, cosy_cosp)
+                
+                telemetry_buffer.insert_manual('des_roll', rel_time, math.degrees(roll))
+                telemetry_buffer.insert_manual('des_pitch', rel_time, math.degrees(pitch))
+                telemetry_buffer.insert_manual('des_yaw', rel_time, math.degrees(yaw))
+            
+            # --- DATALOGS INTERNOS (DataFlash PIDs) ---
+            elif mtype == 'PSCN':
+                # Busca 'TVN' (novo firmware) ou 'TV' (antigo). Retorna None se não achar nenhum.
+                tv = getattr(msg, 'TVN', getattr(msg, 'TV', None))
+                v = getattr(msg, 'VN', getattr(msg, 'V', None))
+                
+                if tv is not None and v is not None:
+                    telemetry_buffer.insert_manual('dvn', rel_time, tv)
+                    telemetry_buffer.insert_manual('vn', rel_time, v)
+                    telemetry_buffer.insert_manual('err_vn', rel_time, tv - v)
+                
+            elif mtype == 'PSCE':
+                # Busca 'TVE' (novo firmware) ou 'TV' (antigo).
+                tv = getattr(msg, 'TVE', getattr(msg, 'TV', None))
+                v = getattr(msg, 'VE', getattr(msg, 'V', None))
+                
+                if tv is not None and v is not None:
+                    telemetry_buffer.insert_manual('dve', rel_time, tv)
+                    telemetry_buffer.insert_manual('ve', rel_time, v)
+                    telemetry_buffer.insert_manual('err_ve', rel_time, tv - v)
 
-            elif mtype == 'RCOU':
-                telemetry_buffer.insert_manual('rcout1', rel_time, getattr(msg, 'C1', 0))
-                telemetry_buffer.insert_manual('rcout2', rel_time, getattr(msg, 'C2', 0))
-                telemetry_buffer.insert_manual('rcout3', rel_time, getattr(msg, 'C3', 0))
-                telemetry_buffer.insert_manual('rcout4', rel_time, getattr(msg, 'C4', 0))
+            # --- VELOCIDADE E POSIÇÃO ATUAL (VN, VE, PN, PE) ---
+            elif mtype == 'LOCAL_POSITION_NED':
+                telemetry_buffer.insert_manual('vn', rel_time, msg.vx)
+                telemetry_buffer.insert_manual('ve', rel_time, msg.vy)
+                telemetry_buffer.insert_manual('pn', rel_time, msg.x) # Posição X Atual
+                telemetry_buffer.insert_manual('pe', rel_time, msg.y) # Posição Y Atual
+
+# --- VELOCIDADE E POSIÇÃO DESEJADA (DVN, DVE, DPN, DPE) ---
+            elif mtype == 'POSITION_TARGET_LOCAL_NED':
+                telemetry_buffer.insert_manual('dvn', rel_time, msg.vx)
+                telemetry_buffer.insert_manual('dve', rel_time, msg.vy)
+                telemetry_buffer.insert_manual('dpn', rel_time, msg.x) # Posição X Desejada
+                telemetry_buffer.insert_manual('dpe', rel_time, msg.y) # Posição Y Desejada
+                
+            # --- RÁDIO CONTROLE E MOTORES ---
+            elif mtype == 'RC_CHANNELS':
+                telemetry_buffer.insert_manual('rcin1', rel_time, msg.chan1_raw)
+                telemetry_buffer.insert_manual('rcin2', rel_time, msg.chan2_raw)
+                telemetry_buffer.insert_manual('rcin3', rel_time, msg.chan3_raw)
+                telemetry_buffer.insert_manual('rcin4', rel_time, msg.chan4_raw)
+
+            elif mtype == 'SERVO_OUTPUT_RAW':
+                telemetry_buffer.insert_manual('rcout1', rel_time, msg.servo1_raw)
+                telemetry_buffer.insert_manual('rcout2', rel_time, msg.servo2_raw)
+                telemetry_buffer.insert_manual('rcout3', rel_time, msg.servo3_raw)
+                telemetry_buffer.insert_manual('rcout4', rel_time, msg.servo4_raw)
             
             count += 1
-            if count % 10000 == 0: self.update()
+            if count % 10000 == 0: 
+                self.update()
         
-        self.log(f"Log Carregado! {count} mensagens processadas.")
+        self.log(f"Log MAVLink carregado! {count} mensagens extraídas e processadas.")
 
     def voltar_para_live(self):
         if self.viewing_log:

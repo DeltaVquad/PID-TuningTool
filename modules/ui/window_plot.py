@@ -51,6 +51,18 @@ class JanelaTelemetria(ctk.CTkToplevel):
             ("err_vn", "Erro Vel North "),
             ("err_ve", "Erro Vel East")
             ],
+            "POSIÇÃO East/Y (m)": [
+            ("dpe", "Pos East Desejada (DPE)"),
+            ("pe", "Pos East Real (PE)")
+            ],
+            "POSIÇÃO North/X (m)": [
+            ("dpn", "Pos North Desejada (DPN)"),
+            ("pn", "Pos North Real (PN)"),
+            ],
+            "ERRO POSIÇÃO (m)": [
+            ("err_pn", "Erro Pos North"),
+            ("err_pe", "Erro Pos East")
+            ],
             "RC INPUT (RCIN)": [("rcin1", "C1 (Rll)"), ("rcin2", "C2 (Pit)"), ("rcin3", "C3 (Thr)"), ("rcin4", "C4 (Yaw)")],
             "RC OUTPUT (RCOUT)": [("rcout1", "C1"), ("rcout2", "C2"), ("rcout3", "C3"), ("rcout4", "C4")]
         }
@@ -206,6 +218,34 @@ class JanelaTelemetria(ctk.CTkToplevel):
                 media_abs = total_abs_error / count
                 results.append(f"Erro {nome_display}:\n  Média: {media_erro:+.4f} m/s | Erro médio: {media_abs:.4f} m/s")
 
+        # 3. Analisar Erros de Posição (Comparando Target vs Real)
+        pares_pos = [('PN (North/X)', 'dpn', 'pn'), ('PE (East/Y)', 'dpe', 'pe')]
+
+        for nome_display, key_desejada, key_real in pares_pos:
+            t_des, v_des = telemetry_buffer.get_values(key_desejada)
+            t_real, v_real = telemetry_buffer.get_values(key_real)
+    
+            if not v_des or not v_real:
+                continue
+        
+            total_erro = 0.0
+            total_abs_error = 0.0
+            count = 0
+    
+            t_min_len = min(len(t_des), len(t_real))
+            for i in range(t_min_len):
+                t = t_real[i]
+                if t_ini <= t <= t_fim:
+                    erro = v_des[i] - v_real[i] # Erro = Desejado - Real
+                    total_erro += erro
+                    total_abs_error += abs(erro)
+                    count += 1
+            
+            if count > 0:
+                media_erro = total_erro / count
+                media_abs = total_abs_error / count
+                results.append(f"Erro {nome_display}:\n  Média: {media_erro:+.4f} m | Erro médio: {media_abs:.4f} m")
+        
         if not results:
             self._exibir_resultado("Nenhum dado encontrado nesse intervalo.")
             return
